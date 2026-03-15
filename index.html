@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Language Detector</title>
+
+<style>
+body{
+    text-align:center;
+    font-family:Arial;
+}
+
+video{
+    width:90%;
+    max-width:400px;
+    border:2px solid black;
+}
+
+canvas{
+    border:2px solid black;
+    margin-top:10px;
+    width:192px;
+    height:192px;
+    image-rendering: pixelated;
+}
+
+button{
+    font-size:18px;
+    padding:10px 20px;
+    margin:10px;
+}
+
+#result{
+    font-size:24px;
+    margin-top:10px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>Sign Language Detector</h2>
+
+<video id="video" autoplay playsinline></video>
+<br>
+
+<button id="capture">Capture</button>
+<button id="predict">Predict</button>
+
+<h3>Processed 28×28 Image</h3>
+<canvas id="canvas" width="96" height="96"></canvas>
+
+<div id="result"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+
+<script>
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const result = document.getElementById("result");
+
+let session = null;
+
+// open camera
+navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:"environment" }
+})
+.then(stream=>{
+    video.srcObject = stream;
+})
+.catch(()=>{
+    alert("Camera access denied");
+});
+
+// load ONNX model
+async function loadModel(){
+    session = await ort.InferenceSession.create(""model_sign_quant.onnx");
+}
+loadModel();
+
+// capture image
+document.getElementById("capture").onclick = function(){
+
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = video.videoWidth;
+    tempCanvas.height = video.videoHeight;
+
+    const tempCtx = tempCanvas.getContext("2d");
+
+    tempCtx.drawImage(video,0,0);
+
+    const imgData = tempCtx.getImageData(0,0,tempCanvas.width,tempCanvas.height);
+    const data = imgData.data;
+
+    let minX=tempCanvas.width;
+    let minY=tempCanvas.height;
+    let maxX=0;
+    let maxY=0;
+
+    for(let y=0;y<tempCanvas.height;y++){
+        for(let x=0;x<tempCanvas.width;x++){
+
+            const i=(y*tempCanvas.width+x)*4;
+            const gray=(data[i]+data[i+1]+data[i+2])/3;
+
+            if(gray<200){
+                if(x<minX) minX=x;
+                if(x>maxX) maxX=x;
+                if(y<minY) minY=y;
+                if(y>maxY) maxY=y;
+            }
+        }
+    }
+
+    if(maxX<=minX || maxY<=minY) return;
+
+    const width=maxX-minX;
+    const height=maxY-minY;
+
+    const cropCanvas=document.createElement("canvas");
+    cropCanvas.width=width;
+    cropCanvas.height=height;
+
+    const cropCtx=cropCanvas.getContext("2d");
+
+    cropCtx.drawImage(
+        tempCanvas,
+        minX,minY,width,height,
+        0,0,width,height
+    );
+
+    ctx.drawImage(cropCanvas,0,0,28,28);
+
+    const processed=ctx.getImageData(0,0,28,28);
+    const pdata=processed.data;
+
+    for(let i=0;i<28*28;i++){
+
+        const r=pdata[i*4];
+        const g=pdata[i*4+1];
+        const b=pdata[i*4+2];
+
+        const gray=(r+g+b)/3;
+
+        const val=255-gray;
+
+        pdata[i*4]=val;
+        pdata[i*4+1]=val;
+        pdata[i*4+2]=val;
+    }
+
+    ctx.putImageData(processed,0,0);
+};
+
+// predict digit
+document.getElementById("predict").onclick = async function(){
+document.getElementById("result").innerText = "Predict button clicked";
+
+try{
+
+if(!session){
+document.getElementById("result").innerText="Model not loaded yet";
+return;
+}
+
+const imgData = ctx.getImageData(0,0,96,96);
+const data = imgData.data;
+
+const input = new Float32Array(96*96);
+
+for(let i=0;i<96*96;i++){
+input[i] = data[i*4] / 255;
+}
+
+const tensor = new ort.Tensor("float32", input, [1,96,96,1]);
+
+const feeds = {};
+feeds[session.inputNames[0]] = tensor;
+
+const outputs = await session.run(feeds);
+
+const scores = outputs[session.outputNames[0]].data;
+
+let maxIndex = 0;
+
+for(let i=1;i<scores.length;i++){
+if(scores[i] > scores[maxIndex]){
+maxIndex = i;
+}
+}
+
+const labels = [
+"0","1","2","3","4","5","6","7","8","9","unknown"
+];
+
+result.innerText =
+"Detected Gesture: " + labels[maxIndex];
+
+
+}
+catch(err){
+
+document.getElementById("result").innerText =
+"Error during prediction";
+
+console.error(err);
+
+}
+
+};
+
+</script>
+
+</body>
+</html>
