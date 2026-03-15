@@ -76,7 +76,7 @@ navigator.mediaDevices.getUserMedia({
 
 // load ONNX model
 async function loadModel(){
-    session = await ort.InferenceSession.create(""model_sign_quant.onnx");
+    session = await ort.InferenceSession.create("model_sign_quant.onnx");
 }
 loadModel();
 
